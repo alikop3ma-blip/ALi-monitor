@@ -274,7 +274,7 @@ class AdvancedLogsViewer:
                         <option value="70">Miner 70</option>
                         <option value="131">Miner 131</option>
                         <option value="132">Miner 132</option>
-                        <option value="134">Miner 134</option>
+                        <option value="133">Miner 133</option>
                     </select>
                 </div>
                 <div style="flex:1;min-width:150px;">

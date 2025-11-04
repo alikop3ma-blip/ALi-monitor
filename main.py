@@ -16,6 +16,8 @@ from pools_manager import update_miner_pools, get_pools_manager_html
 from reboot import reboot_miner, get_reboot_manager_html
 from terminal import execute_terminal_command, get_terminal_html
 from NTP import update_ntp_settings, get_ntp_html
+# در پایین فایل logs_viewer.py
+from logs_viewer import logs_viewer
 
 app = Flask(__name__)
 
@@ -276,7 +278,8 @@ tr:nth-child(even){background:#f8fafc;}
                 </div>
             </div>
             
-            <button class="icon-btn" title="Refresh" onclick="location.reload();">🔄</button>
+            <!-- آیکون جدید Logs جایگزین رفرش -->
+            <button class="icon-btn" onclick="showLogsModal()" title="View Logs">📋</button>
         </div>
         <div class="total-hashrate">
             Total Hashrate: {{ total_hashrate }} TH/s
@@ -394,6 +397,9 @@ tr:nth-child(even){background:#f8fafc;}
 <!-- اضافه شدن NTP مودال -->
 """ + get_ntp_html() + """
 
+<!-- اضافه شدن Logs مودال -->
+""" + logs_viewer.get_logs_html() + """
+
 <!-- Login Report Modal -->
 <div id="modalOverlay" class="modal-overlay" onclick="closeModal()"></div>
 <div id="reportModal" class="modal">
@@ -502,6 +508,199 @@ function closeNtpModal() {
     }
 }
 
+// توابع Logs Modal
+function showLogsModal() {
+    console.log('📋 Opening Logs Modal...');
+    const overlay = document.getElementById('logsModalOverlay');
+    const modal = document.getElementById('logsModal');
+    
+    if (overlay && modal) {
+        overlay.style.display = 'block';
+        modal.style.display = 'block';
+        console.log('✅ Logs Modal opened successfully');
+        
+        // ریست محتوا
+        resetLogsOutput();
+    } else {
+        console.error('❌ Logs Modal elements not found');
+    }
+}
+
+function closeLogsModal() {
+    const overlay = document.getElementById('logsModalOverlay');
+    const modal = document.getElementById('logsModal');
+    
+    if (overlay && modal) {
+        overlay.style.display = 'none';
+        modal.style.display = 'none';
+    }
+}
+
+function showProgressBar() {
+    document.getElementById('logsProgressContainer').style.display = 'block';
+}
+
+function hideProgressBar() {
+    document.getElementById('logsProgressContainer').style.display = 'none';
+}
+
+function updateProgressBar(percent, message) {
+    document.getElementById('logsProgressBar').style.width = percent + '%';
+    document.getElementById('logsProgressText').textContent = message;
+    document.getElementById('logsProgressPercent').textContent = percent + '%';
+}
+
+function showStatus(message, type = 'info') {
+    const statusEl = document.getElementById('logsStatus');
+    statusEl.textContent = message;
+    statusEl.style.display = 'block';
+    
+    const colors = {
+        'info': '#3b82f6',
+        'success': '#10b981', 
+        'warning': '#f59e0b',
+        'error': '#ef4444'
+    };
+    
+    statusEl.style.background = colors[type] + '20';
+    statusEl.style.border = '1px solid ' + colors[type] + '40';
+    statusEl.style.color = colors[type];
+}
+
+function hideStatus() {
+    document.getElementById('logsStatus').style.display = 'none';
+}
+
+function resetLogsOutput() {
+    document.getElementById('logsOutput').innerHTML = `
+        <div style="text-align: center; color: #64748b; padding: 40px 20px;">
+            <div style="font-size: 48px; margin-bottom: 16px;">📋</div>
+            <div style="font-size: 16px; font-weight: 500; margin-bottom: 8px;">Miner Logs Viewer</div>
+            <div style="font-size: 14px; color: #94a3b8;">Select a miner and click "Load Logs" to view system logs</div>
+        </div>
+    `;
+}
+
+function loadMinerLogs() {
+    const miner = document.getElementById('logsMinerSelect').value;
+    const hours = document.getElementById('logsHours').value;
+    const output = document.getElementById('logsOutput');
+
+    if (!miner) {
+        showStatus('⚠️ Please select a miner first!', 'warning');
+        return;
+    }
+
+    showProgressBar();
+    showStatus(`🚀 Starting log retrieval for Miner ${miner}...`, 'info');
+    updateProgressBar(10, 'Initializing connection...');
+
+    output.innerHTML = `
+        <div style="text-align: center; color: #3b82f6; padding: 30px 20px;">
+            <div style="font-size: 32px; margin-bottom: 12px;">⏳</div>
+            <div style="font-size: 14px; font-weight: 500;">Loading logs for Miner ${miner}</div>
+            <div style="font-size: 12px; color: #94a3b8; margin-top: 8px;">Please wait while we connect to the miner...</div>
+        </div>
+    `;
+
+    // شبیه‌سازی پروگرس بار
+    let progress = 10;
+    const progressInterval = setInterval(() => {
+        progress += 2;
+        if (progress <= 90) {
+            updateProgressBar(progress, 'Connecting to miner...');
+        }
+    }, 100);
+
+    // ارسال درخواست
+    fetch('/get_miner_logs', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            miner: miner,
+            hours: hours
+        })
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response.json();
+    })
+    .then(data => {
+        console.log('📦 Received data:', data);
+        clearInterval(progressInterval);
+        updateProgressBar(100, 'Completed!');
+        
+        setTimeout(() => {
+            hideProgressBar();
+            
+            if (data && data.status === 'success') {
+                showStatus(data.message, 'success');
+                output.innerHTML = data.logs || 'No logs content received';
+                output.scrollTop = output.scrollHeight;
+            } else if (data && data.status === 'error') {
+                showStatus(data.message || 'Unknown error', 'error');
+                output.innerHTML = `
+                    <div style="text-align: center; color: #ef4444; padding: 30px 20px;">
+                        <div style="font-size: 32px; margin-bottom: 12px;">❌</div>
+                        <div style="font-size: 14px; font-weight: 500;">${data.message || 'Error'}</div>
+                        <div style="font-size: 12px; color: #fca5a5; margin-top: 8px;">${data.logs || 'No details'}</div>
+                    </div>
+                `;
+            } else {
+                showStatus('❌ Invalid response format', 'error');
+                output.innerHTML = `
+                    <div style="text-align: center; color: #ef4444; padding: 30px 20px;">
+                        <div style="font-size: 32px; margin-bottom: 12px;">🤔</div>
+                        <div style="font-size: 14px; font-weight: 500;">Invalid Response</div>
+                        <div style="font-size: 12px; color: #fca5a5; margin-top: 8px;">Received: ${JSON.stringify(data)}</div>
+                    </div>
+                `;
+            }
+        }, 500);
+    })
+    .catch(err => {
+        console.error('🚨 Fetch error:', err);
+        clearInterval(progressInterval);
+        updateProgressBar(100, 'Error!');
+        hideProgressBar();
+        showStatus('⚠️ Connection error occurred', 'error');
+        output.innerHTML = `
+            <div style="text-align: center; color: #ef4444; padding: 30px 20px;">
+                <div style="font-size: 32px; margin-bottom: 12px;">🔌</div>
+                <div style="font-size: 14px; font-weight: 500;">Connection Error</div>
+                <div style="font-size: 12px; color: #fca5a5; margin-top: 8px;">${err.toString()}</div>
+            </div>
+        `;
+    });
+}
+
+function clearLogs() {
+    resetLogsOutput();
+    hideProgressBar();
+    hideStatus();
+}
+
+function exportLogs() {
+    const logsContent = document.getElementById('logsOutput').innerText;
+    if (!logsContent || logsContent.includes('Select a miner')) {
+        showStatus('⚠️ No logs to export!', 'warning');
+        return;
+    }
+    
+    const blob = new Blob([logsContent], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `miner-logs-${new Date().toISOString().split('T')[0]}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showStatus('✅ Logs exported successfully!', 'success');
+}
+
 function showLoginReport() {
     document.getElementById('modalOverlay').style.display = 'block';
     document.getElementById('reportModal').style.display = 'block';
@@ -559,15 +758,6 @@ function toggleDay(dayId) {
 function closeModal() {
     document.getElementById('modalOverlay').style.display = 'none';
     document.getElementById('reportModal').style.display = 'none';
-}
-
-// Close modal when clicking outside
-window.onclick = function(event) {
-    const modal = document.getElementById('reportModal');
-    const overlay = document.getElementById('modalOverlay');
-    if (event.target === overlay) {
-        closeModal();
-    }
 }
 
 // Terminal functions
@@ -629,6 +819,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const rebootOverlay = document.getElementById('rebootModalOverlay');
     const terminalOverlay = document.getElementById('terminalOverlay');
     const ntpOverlay = document.getElementById('ntpModalOverlay');
+    const logsOverlay = document.getElementById('logsModalOverlay');
     
     if (poolsOverlay) {
         poolsOverlay.addEventListener('click', closePoolsModal);
@@ -641,6 +832,9 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     if (ntpOverlay) {
         ntpOverlay.addEventListener('click', closeNtpModal);
+    }
+    if (logsOverlay) {
+        logsOverlay.addEventListener('click', closeLogsModal);
     }
 });
 </script>
@@ -745,6 +939,32 @@ def update_ntp():
 
     except Exception as e:
         return jsonify({"error": str(e)})
+
+# اضافه شدن route جدید برای Logs
+@app.route("/get_miner_logs", methods=["POST"])
+def get_miner_logs_route():
+    """Route جدید برای دریافت لاگ‌های ماینر"""
+    try:
+        data = request.get_json()
+        miner_name = data.get("miner")
+        hours = data.get("hours", 2)
+
+        if not miner_name:
+            return jsonify({"status": "error", "message": "Missing miner name", "logs": ""})
+
+        result = logs_viewer.get_miner_logs(
+            miner_name=miner_name,
+            hours=hours,
+            miner_ip=MINER_IP,
+            port_map=port_map,
+            miner_username=MINER_USERNAME,
+            miner_password=MINER_PASSWORD
+        )
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Server error: {str(e)}", "logs": ""})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))

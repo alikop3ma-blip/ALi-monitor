@@ -26,39 +26,69 @@ class AdvancedLogsViewer:
             'SUCCESS': '#10B981'
         }
 
-    def get_syslog_via_https(self, ip, port, user, password, timeout_login=5, timeout_log=7):
-        """Try HTTPS then fallback to HTTP and alternative paths"""
+    def get_syslog_via_https(self, ip, port, user, password, timeout_login=10, timeout_log=30):
+        """Try HTTPS then fallback to HTTP with increased timeouts"""
         session = requests.Session()
+        
         try:
+            print(f"🆕 Creating new session for {ip}:{port}")
+            
+            # ۱. صفحه لاگین
             login_url = f"https://{ip}:{port}/cgi-bin/luci"
-            log_url = f"https://{ip}:{port}/cgi-bin/luci/admin/status/syslog"
-            session.get(login_url, verify=False, timeout=timeout_login)
-            session.post(login_url, data={'luci_username': user, 'luci_password': password}, verify=False, timeout=timeout_login)
-            res = session.get(log_url, verify=False, timeout=timeout_log)
-            return res.text
-        except Exception:
+            r1 = session.get(login_url, verify=False, timeout=timeout_login)
+            print(f"📄 Login page status: {r1.status_code}")
+            print(f"🍪 Cookies after GET: {session.cookies.get_dict()}")
+            
+            # ۲. لاگین
+            login_data = {'luci_username': user, 'luci_password': password}
+            r2 = session.post(login_url, data=login_data, verify=False, timeout=timeout_login, allow_redirects=True)
+            print(f"🔐 Login status: {r2.status_code}")
+            print(f"🍪 Cookies after POST: {session.cookies.get_dict()}")
+            print(f"📏 Response length: {len(r2.text)}")
+            
+            # ۳. چک کن آیا لاگین موفق بود
+            if "Authorization Required" in r2.text:
+                print("❌ LOGIN FAILED - Still on login page")
+                return "ERROR: Login failed"
+            else:
+                print("✅ LOGIN SUCCESS - Redirected from login page")
+            
+            # ۴. صفحه syslog
+            syslog_url = f"https://{ip}:{port}/cgi-bin/luci/admin/status/syslog"
+            r3 = session.get(syslog_url, verify=False, timeout=timeout_log)
+            print(f"📋 Syslog status: {r3.status_code}")
+            print(f"🍪 Final cookies: {session.cookies.get_dict()}")
+            
+            if r3.status_code == 200:
+                print(f"✅ SUCCESS - Got {len(r3.text)} characters")
+                return r3.text
+            else:
+                print(f"❌ FAILED - Status {r3.status_code}")
+                # Fallback to log.cgi
+                try:
+                    log_url = f"https://{ip}:{port}/cgi-bin/log.cgi"
+                    r4 = session.get(log_url, verify=False, timeout=timeout_log)
+                    if r4.status_code == 200:
+                        return r4.text
+                except:
+                    pass
+                return f"ERROR: Status {r3.status_code}"
+                
+        except requests.exceptions.Timeout:
+            print("💥 Timeout error")
+            return "ERROR: Timeout - Log page is taking too long to load"
+        except Exception as e:
+            print(f"💥 Exception: {str(e)}")
+            # Fallback to HTTP
             try:
                 login_url = f"http://{ip}:{port}/cgi-bin/luci"
-                log_url = f"http://{ip}:{port}/cgi-bin/luci/admin/status/syslog"
                 session.get(login_url, timeout=timeout_login)
-                session.post(login_url, data={'luci_username': user, 'luci_password': password}, timeout=timeout_login)
+                session.post(login_url, data={'luci_username': user, 'luci_password': password}, timeout=timeout_login, allow_redirects=True)
+                log_url = f"http://{ip}:{port}/cgi-bin/luci/admin/status/syslog"
                 res = session.get(log_url, timeout=timeout_log)
                 return res.text
-            except Exception:
-                try:
-                    login_url = f"https://{ip}:{port}/cgi-bin/luci"
-                    log_url = f"https://{ip}:{port}/cgi-bin/log.cgi"
-                    session.get(login_url, verify=False, timeout=timeout_login)
-                    session.post(login_url, data={'luci_username': user, 'luci_password': password}, verify=False, timeout=timeout_login)
-                    res = session.get(log_url, verify=False, timeout=timeout_log)
-                    return res.text
-                except Exception:
-                    try:
-                        log_url = f"http://{ip}:{port}/cgi-bin/log.cgi"
-                        res = session.get(log_url, timeout=timeout_log)
-                        return res.text
-                    except Exception as e2:
-                        return f"ERROR_FETCHING_SYSLOG: {e2}"
+            except Exception as e2:
+                return f"ERROR_FETCHING_SYSLOG: {e2}"
 
     def get_miner_logs(self, miner_name, hours=2, miner_ip=None, port_map=None, miner_username=None, miner_password=None):
         """
@@ -72,10 +102,16 @@ class AdvancedLogsViewer:
             if miner_name not in port_map:
                 return {"status": "error", "message": f"❌ Miner {miner_name} not found in port map", "logs": "", "progress": 100}
 
-            port = port_map[miner_name]
-            log_content = self.get_syslog_via_https(miner_ip, port, miner_username, miner_password)
+            # افزایش تایم‌اوت برای ماینرهای سنگین
+            if miner_name in ['131', '132', '133']:
+                timeout_log = 45  # 45 ثانیه برای ماینرهای جدید
+            else:
+                timeout_log = 30  # 30 ثانیه برای ماینرهای قدیمی
 
-            if log_content and not str(log_content).startswith("ERROR_FETCHING_SYSLOG"):
+            port = port_map[miner_name]
+            log_content = self.get_syslog_via_https(miner_ip, port, miner_username, miner_password, timeout_log=timeout_log)
+
+            if log_content and not str(log_content).startswith("ERROR_FETCHING_SYSLOG") and "ERROR: Login failed" not in log_content:
                 logs = self.parse_real_syslog(log_content, hours, miner_name)
                 if logs:
                     formatted_logs = self.format_logs_display(logs, miner_name, hours)
